@@ -1,0 +1,30 @@
+name: tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 結構化流程（示範模式，不呼叫 API）
+        run: python notes_to_json.py --input examples/sample_notes.txt --mock examples/mock_responses.json --out output/leads.csv
+      - name: 檢查驗證與業務規則
+        run: |
+          python - <<'PY'
+          import json
+          rows = json.load(open("output/leads.json", encoding="utf-8"))
+          by = {r["學員代稱"]: r for r in rows}
+          assert len(rows) == 8
+          assert by["王同學"]["狀態"] == "已報價"            # 「已報」不可判成已成交
+          assert by["王同學"]["下次跟進日期"] == "2026-11-11"  # 「下週三」不可算成本週三
+          assert sum(1 for r in rows if r["必須處理"]) == 2
+          print("OK")
+          PY
