@@ -28,3 +28,5 @@ jobs:
           assert sum(1 for r in rows if r["必須處理"]) == 2
           print("OK")
           PY
+      - name: 資料庫與 SQL 報表測試
+        run: python test_store.py
