@@ -5,7 +5,7 @@
 顧問每天寫的諮詢摘要是口語文字，例如「已報 6 個月方案，說下週三前回覆」。要追蹤名單時，得一筆一筆讀，再手動整理出目標、狀態、下次跟進日期。
 這支程式用 Python 呼叫 Claude API，把摘要轉成固定欄位的表格，並由程式驗證結果，**不直接相信模型的輸出**。
 
-只用 Python 標準函式庫（3.9 以上），不需安裝任何套件。範例資料全部虛構。
+只用 Python 標準函式庫（3.10 以上），不需安裝任何套件。範例資料全部虛構。
 
 ## 要解決的問題
 
@@ -41,6 +41,39 @@
 三輪的原始輸出保留在 `examples/real_run_v1.json`～`real_run_v3.json`（當時的欄位格式，未拆欄）。v1 的用量為輸入 14,813、輸出 3,115 token。
 
 另外，第一次呼叫就遇到 API 錯誤：schema 的欄位名稱只能用英文、數字、底線。所以程式內部改用英文鍵（例如 `next_follow_up`），輸出時再轉回中文標題。
+
+## 存進資料庫：用 SQL 產生追蹤報表
+
+結構化之後的資料，用 `store.py` 匯入 SQLite，再用 `queries.sql` 裡的 SQL 產生業務每天要看的報表。只用 Python 內建的 sqlite3。
+
+```bash
+python store.py --json examples/real_run_v3.json --db output/leads.db --today 2026-11-10
+```
+
+**資料表設計**：一位學員可以有多個目標、多個顧慮，所以拆成三張表，用外鍵關聯：
+
+| 資料表 | 內容 |
+| --- | --- |
+| `leads` | 每筆諮詢一列：學員、狀態、跟進日期、需處理事項、原始摘要 |
+| `lead_goals` | 學員 × 目標（多益、雅思……） |
+| `lead_concerns` | 學員 × 顧慮（價格、時間……） |
+
+- 以「諮詢日期＋原始摘要」設唯一鍵，**同一份資料重複匯入只會更新，不會產生重複紀錄**
+- 匯入包在一個交易裡，中途出錯就全部不寫入
+- 刪除學員時，目標與顧慮一併刪除（`ON DELETE CASCADE`）
+
+**報表**（以 v3 真實執行結果、基準日 2026-11-10）：
+
+| 報表 | SQL 重點 | 結果 |
+| --- | --- | --- |
+| 本週要跟進 | `BETWEEN :today AND date(:today, '+6 days')` | 王同學（11/11）、黃小姐（11/13） |
+| 已逾期未跟進 | `julianday()` 計算逾期天數 | 林媽媽的女兒，逾期 1 天 |
+| 追蹤中但沒約跟進日期 | `next_follow_up IS NULL` | 陳先生 |
+| 狀態分布 | `GROUP BY` 與百分比子查詢 | 考慮中 3、已報價 2…… |
+| 各目標的報價與成交 | `JOIN` 目標表後條件加總 | 研究所英文 1 人諮詢、1 人成交…… |
+| 追蹤中名單的顧慮 | `JOIN` 顧慮表 | 價格、預算、時間、公司補助…… |
+
+`test_store.py` 檢查以上結果、重複匯入、換基準日後的逾期判斷，以及刪除時的連動刪除（9 項）。
 
 ## 範例結果（v3 節錄）
 
@@ -83,6 +116,8 @@ python3 notes_to_json.py --input examples/sample_notes.txt --out output/leads.cs
 | 檔案 | 內容 |
 | --- | --- |
 | `notes_to_json.py` | 主程式：讀摘要 → 呼叫 API → 驗證 → 重試 → 輸出 CSV／JSON |
+| `store.py`、`queries.sql` | 匯入 SQLite、執行追蹤報表的 SQL |
+| `test_store.py` | 資料庫與報表的自動測試（9 項） |
 | `examples/sample_notes.txt` | 8 筆虛構諮詢摘要 |
 | `examples/mock_responses.json` | 免費示範用的模型回覆（第 1 筆故意判錯，示範驗證與重試） |
 | `examples/real_run_v1~v3.json` | 三輪實際呼叫 API 的原始輸出 |
